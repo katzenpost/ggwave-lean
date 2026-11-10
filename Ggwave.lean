@@ -1,6 +1,8 @@
 import Ggwave.Basic
 import Ggwave.Protocol
+import Ggwave.GF256
 import Ggwave.ReedSolomon
+import Ggwave.Framing
 import Ggwave.Fft
 import Ggwave.Resampler
 import Ggwave.Tone

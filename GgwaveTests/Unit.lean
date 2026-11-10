@@ -1,44 +1,21 @@
-import Tests.Common
+import GgwaveTests.Common
 
 /-! Module-level checks, from the Rust crate's unit tests and `tests/api.rs`. -/
 
 open Ggwave
 
-namespace Tests
-
-def reedSolomon : T Unit := do
-  -- spot values from reed-solomon/gf.hpp
-  check (ReedSolomon.expTable.extract 0 10 == ⟨#[1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80, 0x1d, 0x3a]⟩) "RS exp table"
-  check (ReedSolomon.expTable.extract 508 512 == ⟨#[0x47, 0x8e, 0x1, 0x2]⟩) "RS exp table end"
-  check (ReedSolomon.logTable.extract 0 8 == ⟨#[0, 0, 1, 0x19, 2, 0x32, 0x1a, 0xc6]⟩) "RS log table"
-  check (ReedSolomon.logTable[255]! == 0xaf) "RS log 255"
-  -- C RS::ReedSolomon(32, 12).Encode() of this message
-  let msg : ByteArray := ⟨(Array.range 32).map fun i => (i * 37 % 256).toUInt8 ^^^ 0x5a⟩
-  let enc := ReedSolomon.encode msg 12
-  check (enc.extract 32 44 == ⟨#[0x5e, 0xf0, 0xe5, 0x27, 0x07, 0xbb, 0xb8, 0x30, 0xbc, 0xc0, 0x5c, 0x38]⟩)
-    "RS parity matches C"
-  let ecc := ReedSolomon.eccBytesForLength msg.size
-  let enc := ReedSolomon.encode msg ecc
-  check (ReedSolomon.decode enc ecc == some msg) "RS decodes clean"
-  let mut bad := enc
-  for i in [0:ecc / 2] do
-    bad := bad.set! (i * 7 % bad.size) (bad[i * 7 % bad.size]! ^^^ 0xa5)
-  check (ReedSolomon.decode bad ecc == some msg) "RS corrects ecc/2 errors"
-  let mut worse := enc
-  for i in [0:ecc] do
-    worse := worse.set! (i * 3) (worse[i * 3]! ^^^ 0x11)
-  check (ReedSolomon.decode worse ecc != some msg) "RS does not claim to fix ecc errors"
+namespace GgwaveTests
 
 def fft : T Unit := do
   let n := 1024
-  let x : FloatArray := ⟨(Array.range n).map fun i => (2 * pi * 40 * i.toFloat / n.toFloat).sin⟩
+  let x := Samples.ofFn n fun i => (2 * pi * 40 * i.toFloat / n.toFloat).sin
   let s := (Fft.new n).power x
   let mut peak := 1
   for k in [1:n / 2] do
-    if s[k]! > s[peak]! then peak := k
+    if s.get k > s.get peak then peak := k
   check (peak == 40) s!"FFT peak at {peak}"
   -- |X_k| = n/2 for a unit sine
-  check ((s[40]!.sqrt - n.toFloat / 2).abs < 0.5) "FFT magnitude"
+  check (((s.get 40).sqrt - n.toFloat / 2).abs < 0.5) "FFT magnitude"
 
 def rejectsBadInput : T Unit := do
   let p : Parameters := {}
@@ -87,11 +64,19 @@ def readmeExample : T Unit := do
   let blocks := (List.range ((x.size + 959) / 960)).map fun i => slice x (960 * i) (min x.size (960 * (i + 1)))
   check ((listen blocks).toOption == some (some code)) "README listen"
 
+-- a payload whose length is checked by the type checker: no `Except` to handle
+def voucherTones (code : Vector UInt8 32) : FloatArray :=
+  encodeWith Config.default .audibleFast 25 code (by decide)
+
+def typedVoucher : T Unit := do
+  let s := voucherTones (Vector.replicate 32 0x5a)
+  check ((encode {} .audibleFast 25 code).toOption.map (·.toList) == some s.toList) "typed and checked encoders agree"
+
 def unit : T Unit := do
   readmeExample
-  reedSolomon
+  typedVoucher
   fft
   rejectsBadInput
   halfRateHalfFrame
 
-end Tests
+end GgwaveTests

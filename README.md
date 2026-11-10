@@ -42,11 +42,18 @@ def listen (blocks : List FloatArray) : Except Error (Option ByteArray) := do
 `Parameters` takes the sample rates and frame size; ggwave's 46.875 Hz bins
 come from 48000 Hz with 1024-sample frames or 24000 Hz with 512.
 
+`encode` checks untrusted input. Underneath it, `encodeWith` takes a
+`Vector UInt8 n` and a proof that `n` fits the mode, so it has no error case:
+`encodeWith Config.default .audibleFast 25 code (by decide)` for a 32-byte
+`code`. Reed-Solomon blocks, tone choices and frames carry their lengths in
+their types in the same way.
+
 ## Tests
 
-`lake test` checks the encoder and decoder against waveforms rendered by C
-ggwave, kept in `Tests/vectors`. With the C library and the Rust crate built
-as test tools, it also encodes and decodes in both directions against them:
+`lake test` checks each module against vectors from C ggwave, and the whole
+codec against waveforms it rendered; `tests/vectors/README.md` describes them.
+With the C library and the Rust crate built as test tools, it also encodes and
+decodes in both directions against them:
 
 ```sh
 cargo build --release --manifest-path tools/ggwave-rs-oracle/Cargo.toml --target-dir target/rs

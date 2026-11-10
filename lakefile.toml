@@ -8,9 +8,9 @@ name = "Ggwave"
 
 # test modules, used by the `tests` executable only
 [[lean_lib]]
-name = "Tests"
-globs = ["Tests.+"]
+name = "GgwaveTests"
+globs = ["GgwaveTests.+"]
 
 [[lean_exe]]
 name = "tests"
-root = "Tests"
+root = "GgwaveTests"

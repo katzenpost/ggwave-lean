@@ -16,12 +16,12 @@ def Config.markerBin (c : Config) (p : ProtocolParams) (i : Nat) : Nat :=
 
 /-- True if every marker bit in `spectrum` has the start marker's tone (`start`)
 or the end marker's. -/
-def Config.markerDetected (c : Config) (spectrum : FloatArray) (p : ProtocolParams)
+def Config.markerDetected (c : Config) (spectrum : Samples n) (p : ProtocolParams)
     (start : Bool) : Bool :=
   (List.range bitsInMarker).all fun i =>
     let bin := c.markerBin p i
-    let a := spectrum[bin]!
-    let b := c.threshold.toFloat * spectrum[bin + 1]!
+    let a := spectrum.get bin
+    let b := c.threshold.toFloat * spectrum.get (bin + 1)
     if (i % 2 == 0) == start then a > b else a < b
 
 end Ggwave

@@ -21,13 +21,11 @@ def resampleChunk : Nat := 1024
 
 open ReedSolomon (eccBytesForLength)
 
-/-- Receiver state. Use each state once (pass it to `Decoder.step` and keep
-only the result) so that its buffers are updated in place. -/
-structure DecoderState where
-  cfg : Config
+/-- Receiver state for configuration `cfg`. -/
+structure Receiver (cfg : Config) where
   protocols : Array ProtocolParams
-  fft : Fft
-  spectrum : FloatArray
+  fft : Fft cfg.spf
+  spectrum : Samples cfg.spf
   pending : FloatArray
   resampler : Option Resampler
   resampleInput : FloatArray
@@ -39,14 +37,20 @@ structure DecoderState where
   recvDurationFrames : Int := 0
   framesLeftToRecord : Int := 0
   framesToRecord : Int := 0
-  historyId : Nat := 0
-  history : Array FloatArray
+  historyId : Fin maxSpectrumHistory := ⟨0, by decide⟩
+  history : Vector (Samples cfg.spf) maxSpectrumHistory
   recorded : FloatArray := .empty
   -- fixed-length state
   minFreqStart : Nat
   historyFixed : Array ByteArray
   historyIdFixed : Nat := 0
-  deriving Inhabited
+
+/-- A receiver with the configuration it was built for. Use each state once
+(pass it to `Decoder.step` and keep only the result) so that its buffers are
+updated in place. -/
+structure DecoderState where
+  cfg : Config
+  rx : Receiver cfg
 
 def maxFramesPerTx (protocols : Array ProtocolParams) (excludeMt : Bool) : Nat :=
   protocols.foldl (init := 0) fun m p =>
@@ -68,31 +72,31 @@ def init (params : Parameters) (protocols : List Protocol) : Except Error Decode
   let historyFixed := match cfg.fixedLen with
     | some _ => Array.replicate (totalLength * maxFramesPerTx ps false) (ByteArray.mk (Array.replicate spf 0))
     | none => #[]
-  return {
-    cfg, protocols := ps, fft := Fft.new spf, spectrum := zeros spf, pending := .empty
+  return { cfg, rx := {
+    protocols := ps, fft := Fft.new cfg.spf, spectrum := Samples.zeros cfg.spf, pending := .empty
     resampler := if cfg.needResampling then some Resampler.new else none
     resampleInput := .empty
     encoded := ByteArray.mk (Array.replicate (totalLength + cfg.encodedDataOffset) 0)
-    history := Array.replicate maxSpectrumHistory (zeros spf)
+    history := Vector.replicate maxSpectrumHistory (Samples.zeros cfg.spf)
     minFreqStart := ps.foldl (init := spf) fun m p => min m p.freqStart
-    historyFixed }
+    historyFixed } }
 
 /-- True between a start marker and the end of its analysis. -/
-def isReceiving (s : DecoderState) : Bool := s.receiving
+def isReceiving (s : DecoderState) : Bool := s.rx.receiving
 
 /-- Searches the recorded frames for the payload after an end marker (or a full recording). -/
-def analyze (s : DecoderState) : ByteArray × Option ByteArray := Id.run do
-  let spf := s.cfg.spf
+def analyze {cfg : Config} (s : Receiver cfg) : ByteArray × Option ByteArray := Id.run do
+  let spf := cfg.spf
   let step := spf / stepsPerFrame
-  let nm := s.cfg.nMarkerFrames
-  let offset := s.cfg.encodedDataOffset
+  let nm := cfg.nMarkerFrames
+  let offset := cfg.encodedDataOffset
   let mut encoded := s.encoded
   for p in s.protocols do
     if p.extra == 2 || p.freqStart != s.markerFreqStart then continue
     let bpt := p.bytesPerTx
     let fpt := p.framesPerTx
     let baseBin :=
-      ((s.cfg.hzPerSample * p.freqStart.toFloat32).toFloat * s.cfg.ihzPerSample.toFloat).round.toUInt64.toNat
+      ((cfg.hzPerSample * p.freqStart.toFloat32).toFloat * cfg.ihzPerSample.toFloat).round.toUInt64.toNat
     for iiRev in [0:nm * stepsPerFrame] do
       let ii := nm * stepsPerFrame - 1 - iiRev
       let mut knownLength := false
@@ -101,12 +105,10 @@ def analyze (s : DecoderState) : ByteArray × Option ByteArray := Id.run do
         let offsetTx := ii + itx * fpt * stepsPerFrame
         if offsetTx ≥ s.recvDurationFrames * stepsPerFrame || (itx + 1) * bpt ≥ encoded.size then
           break
-        let base := offsetTx * step
-        let mut fftIn := slice s.recorded base (base + spf)
+        let mut fftIn := Samples.slice s.recorded (offsetTx * step) cfg.spf
         for k in [1:fpt] do
           let pos := (offsetTx + k * stepsPerFrame) * step
-          for i in [0:spf] do
-            fftIn := fftIn.set! i (fftIn[i]! + s.recorded[pos + i]!)
+          fftIn := fftIn.mapIdx fun i x => x + s.recorded[pos + i]!
         let spectrum := s.fft.power fftIn
 
         let mut curByte : UInt8 := 0
@@ -115,7 +117,7 @@ def analyze (s : DecoderState) : ByteArray × Option ByteArray := Id.run do
           let mut kmax : UInt8 := 0
           let mut amax : Float := 0
           for k in [0:16] do
-            let v := spectrum[bin + k]!
+            let v := spectrum.get (bin + k)
             if v > amax then
               kmax := k.toUInt8
               amax := v
@@ -127,11 +129,11 @@ def analyze (s : DecoderState) : ByteArray × Option ByteArray := Id.run do
             curByte := kmax
 
         if itx * bpt > offset && !knownLength then
-          match ReedSolomon.decode (encoded.extract 0 offset) (offset - 1) with
+          match ReedSolomon.decode .lengthHeader (ReedSolomon.ofBytes encoded 0 3) with
           | some d =>
-            if d[0]! > 0 && d[0]!.toNat ≤ maxLengthVariable then
+            if d[0].val > 0 && d[0].val.toNat ≤ maxLengthVariable then
               knownLength := true
-              decodedLength := d[0]!.toNat
+              decodedLength := d[0].val.toNat
               let bytes := offset + decodedLength + eccBytesForLength decodedLength
               let frames : Int := 2 * nm + (bytes + bpt - 1) / bpt * fpt
               if s.recvDurationFrames > frames || s.recvDurationFrames < frames - 2 * nm then
@@ -145,28 +147,25 @@ def analyze (s : DecoderState) : ByteArray × Option ByteArray := Id.run do
         if knownLength && itx * bpt > bytes + 1 then
           break
 
-      if knownLength then
-        let ecc := eccBytesForLength decodedLength
-        if let some data := ReedSolomon.decode (encoded.extract offset (offset + decodedLength + ecc)) ecc then
-          return (encoded, some (if s.cfg.dss then applyDss data else data))
+      if h : knownLength ∧ decodedLength ≤ maxLengthVariable then
+        let code := ReedSolomon.Code.payload decodedLength h.2
+        if let some data := ReedSolomon.decode code (ReedSolomon.ofBytes encoded offset code.blockLen) then
+          let data := ReedSolomon.toBytes data
+          return (encoded, some (if cfg.dss then applyDss data else data))
   return (encoded, none)
 
 /-- One frame in variable-length mode: marker detection, recording and analysis. -/
-def decodeVariable (s : DecoderState) (frame : FloatArray) : DecoderState × Option ByteArray := Id.run do
-  let spf := s.cfg.spf
-  let nm := s.cfg.nMarkerFrames
+def decodeVariable {cfg : Config} (s : Receiver cfg) (frame : Samples cfg.spf) :
+    Receiver cfg × Option ByteArray := Id.run do
+  let spf := cfg.spf
+  let nm := cfg.nMarkerFrames
   let mut s := { s with
-    history := s.history.set! s.historyId frame
-    historyId := (s.historyId + 1) % maxSpectrumHistory }
+    history := s.history.set s.historyId frame
+    historyId := ⟨(s.historyId.val + 1) % maxSpectrumHistory, Nat.mod_lt _ (by decide)⟩ }
 
-  if s.historyId == 0 || s.receiving then
-    let mut average := zeros spf
-    for h in s.history do
-      for i in [0:spf] do
-        average := average.set! i (average[i]! + h[i]!)
+  if s.historyId.val == 0 || s.receiving then
     let norm := 1 / maxSpectrumHistory.toFloat
-    for i in [0:spf] do
-      average := average.set! i (average[i]! * norm)
+    let average := Samples.ofFn _ fun i => s.history.foldl (fun a h => a + h.get i) 0 * norm
     s := { s with spectrum := s.fft.power average }
 
   if s.framesLeftToRecord > 0 then
@@ -177,7 +176,7 @@ def decodeVariable (s : DecoderState) (frame : FloatArray) : DecoderState × Opt
       recorded := zeros (maxRecordedFrames * spf)
     let pos := (s.framesToRecord - s.framesLeftToRecord).toNat * spf
     for i in [0:spf] do
-      recorded := recorded.set! (pos + i) frame[i]!
+      recorded := recorded.set! (pos + i) (frame.get i)
     s := { s with recorded, framesLeftToRecord := s.framesLeftToRecord - 1 }
     if s.framesLeftToRecord ≤ 0 then
       s := { s with analyzing := true }
@@ -188,10 +187,10 @@ def decodeVariable (s : DecoderState) (frame : FloatArray) : DecoderState × Opt
     result := r
     s := { s with
       encoded, framesToRecord := if r.isSome then 0 else -1
-      receiving := false, analyzing := false, spectrum := zeros spf }
+      receiving := false, analyzing := false, spectrum := Samples.zeros _ }
 
   if !s.receiving then
-    if let some p := s.protocols.find? (s.cfg.markerDetected s.spectrum · true) then
+    if let some p := s.protocols.find? (cfg.markerDetected s.spectrum · true) then
       let maxLen := maxLengthVariable + eccBytesForLength maxLengthVariable
       -- minBytesPerTx() in C is always 1
       let frames : Int := 2 * nm + maxFramesPerTx s.protocols true * (maxLen + 1)
@@ -199,7 +198,7 @@ def decodeVariable (s : DecoderState) (frame : FloatArray) : DecoderState × Opt
         markerFreqStart := p.freqStart, receiving := true
         recvDurationFrames := frames, framesToRecord := frames, framesLeftToRecord := frames }
   else
-    let ended := s.protocols.any (s.cfg.markerDetected s.spectrum · false)
+    let ended := s.protocols.any (cfg.markerDetected s.spectrum · false)
     if ended && s.framesToRecord > 1 then
       s := { s with
         recvDurationFrames := s.recvDurationFrames - (s.framesLeftToRecord - 1)
@@ -218,17 +217,18 @@ def argmax16 (row : ByteArray) (start : Nat) : Nat := Id.run do
 
 /-- One frame in fixed-length mode: every frame's tones are kept and the last
 transmission's worth is decoded by majority vote. -/
-def decodeFixed (s : DecoderState) (frame : FloatArray) : DecoderState × Option ByteArray := Id.run do
-  let spf := s.cfg.spf
-  let payloadLength := s.cfg.fixedLen.getD 0
+def decodeFixed {cfg : Config} (s : Receiver cfg) (frame : Samples cfg.spf) :
+    Receiver cfg × Option ByteArray := Id.run do
+  let spf := cfg.spf
+  let payloadLength := cfg.fixedLen.getD 0
   let spectrum := s.fft.power frame
   let mut amax : Float := 0
   for i in [max s.minFreqStart 1:spf / 2] do
-    amax := if amax ≥ spectrum[i]! then amax else spectrum[i]!
+    amax := if amax ≥ spectrum.get i then amax else spectrum.get i
   let scale := 255 / (if amax == 0 then 1 else amax)
   let mut newRow := ByteArray.emptyWithCapacity spf
   for i in [0:spf] do
-    newRow := newRow.push (spectrum[i]! * scale).round.toUInt8
+    newRow := newRow.push (spectrum.get i * scale).round.toUInt8
   let historyLen := s.historyFixed.size
   let mut s := { s with
     spectrum
@@ -279,28 +279,27 @@ def decodeFixed (s : DecoderState) (frame : FloatArray) : DecoderState × Option
     for j in [0:totalLength] do
       encoded := encoded.set! j ((detectedBins[2 * j + 1]! <<< 4) + detectedBins[2 * j]!)
     s := { s with encoded }
-    if let some data := ReedSolomon.decode (encoded.extract 0 totalLength) (eccBytesForLength payloadLength) then
-      return (s, some (if s.cfg.dss then applyDss data else data))
+    if h : payloadLength ≤ maxLengthVariable then
+      let code := ReedSolomon.Code.payload payloadLength h
+      if let some data := ReedSolomon.decode code (ReedSolomon.ofBytes encoded 0 code.blockLen) then
+        let data := ReedSolomon.toBytes data
+        return (s, some (if cfg.dss then applyDss data else data))
   return (s, none)
 
-/-- Feeds mono samples (-1..1) at `sampleRateInp`, in blocks of any size.
-Returns the next state and the payload completed by these samples, if any
-(the last one, if several).
-
-In fixed-length mode, as in C ggwave, the same transmission can be reported
-again on the following frames. -/
-def step (s : DecoderState) (samples : FloatArray) : DecoderState × Option ByteArray := Id.run do
+/-- `Decoder.step` for a receiver of known configuration. -/
+def stepReceiver {cfg : Config} (s : Receiver cfg) (samples : FloatArray) :
+    Receiver cfg × Option ByteArray := Id.run do
   let mut pending := s.pending
   let mut s := { s with pending := .empty }
   match s.resampler with
   | some r =>
     let input := pushSlice s.resampleInput samples 0 samples.size
-    let factor := s.cfg.sampleRateInp / s.cfg.sampleRate
+    let factor := cfg.sampleRateInp / cfg.sampleRate
     let chunks := input.size / resampleChunk
     let mut r := r
     for ci in [0:chunks] do
       -- C resets the resampler about once a minute while idle
-      if !s.receiving && Float32.ofInt r.nSamplesTotal > 60 * factor * s.cfg.sampleRate then
+      if !s.receiving && Float32.ofInt r.nSamplesTotal > 60 * factor * cfg.sampleRate then
         r := r.reset
       let (r', p') := r.resample factor (slice input (ci * resampleChunk) ((ci + 1) * resampleChunk)) pending
       r := r'
@@ -308,15 +307,25 @@ def step (s : DecoderState) (samples : FloatArray) : DecoderState × Option Byte
     s := { s with resampler := some r, resampleInput := slice input (chunks * resampleChunk) input.size }
   | none => pending := pushSlice pending samples 0 samples.size
 
-  let spf := s.cfg.spf
+  let spf := cfg.spf
   let frames := pending.size / spf
   let mut result := none
   for f in [0:frames] do
-    let frame := slice pending (f * spf) ((f + 1) * spf)
-    let (s', r) := if s.cfg.fixedLen.isSome then decodeFixed s frame else decodeVariable s frame
+    let frame := Samples.slice pending (f * spf) cfg.spf
+    let (s', r) := if cfg.fixedLen.isSome then decodeFixed s frame else decodeVariable s frame
     s := s'
     if r.isSome then result := r
   return ({ s with pending := slice pending (frames * spf) pending.size }, result)
+
+/-- Feeds mono samples (-1..1) at `sampleRateInp`, in blocks of any size.
+Returns the next state and the payload completed by these samples, if any
+(the last one, if several).
+
+In fixed-length mode, as in C ggwave, the same transmission can be reported
+again on the following frames. -/
+def step (s : DecoderState) (samples : FloatArray) : DecoderState × Option ByteArray :=
+  let (rx, r) := stepReceiver s.rx samples
+  (⟨s.cfg, rx⟩, r)
 
 end Decoder
 

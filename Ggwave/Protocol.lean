@@ -34,16 +34,35 @@ inductive Protocol where
   | mtFastest
   deriving Repr, DecidableEq, Inhabited
 
+/-- A protocol's constants, from ggwave.h `Protocols::kDefault()`, with the
+facts the framing relies on. -/
 structure ProtocolParams where
   /-- FFT bin index of the lowest frequency. -/
   freqStart : Nat
-  /-- Number of frames used to transmit one chunk of data. -/
+  /-- Number of frames used to transmit one chunk of data (a Tx). -/
   framesPerTx : Nat
   /-- Number of bytes in one chunk of data. -/
   bytesPerTx : Nat
-  /-- 2 for mono-tone protocols, 1 otherwise. -/
+  /-- 2 for mono-tone protocols, which spend two Txs on each byte, 1 otherwise. -/
   extra : Nat
-  deriving Repr, Inhabited
+  framesPerTx_pos : 0 < framesPerTx
+  bytesPerTx_pos : 0 < bytesPerTx
+  /-- Mono-tone protocols send one nibble per Tx. -/
+  extra_cases : extra = 1 ∨ (extra = 2 ∧ bytesPerTx = 1)
+
+namespace ProtocolParams
+
+/-- Tone groups sounded in each Tx (`nTones` in C): one per nibble sent. -/
+def tonesPerTx (p : ProtocolParams) : Nat := 2 * p.bytesPerTx / p.extra
+
+/-- Txs needed for `bytes` coded bytes. -/
+def txCount (p : ProtocolParams) (bytes : Nat) : Nat :=
+  p.extra * ((bytes + p.bytesPerTx - 1) / p.bytesPerTx)
+
+/-- Data frames needed for `bytes` coded bytes. -/
+def dataFrames (p : ProtocolParams) (bytes : Nat) : Nat := p.txCount bytes * p.framesPerTx
+
+end ProtocolParams
 
 namespace Protocol
 
@@ -71,21 +90,21 @@ def name : Protocol → String
   | mtNormal => "[MT] Normal" | mtFast => "[MT] Fast" | mtFastest => "[MT] Fastest"
 
 /-- (freqStart, framesPerTx, bytesPerTx, extra) from ggwave.h `Protocols::kDefault()`. -/
-def params (p : Protocol) : ProtocolParams :=
-  let (freqStart, framesPerTx, bytesPerTx, extra) := match p with
-    | audibleNormal => (40, 9, 3, 1)
-    | audibleFast => (40, 6, 3, 1)
-    | audibleFastest => (40, 3, 3, 1)
-    | ultrasoundNormal => (320, 9, 3, 1)
-    | ultrasoundFast => (320, 6, 3, 1)
-    | ultrasoundFastest => (320, 3, 3, 1)
-    | dtNormal => (24, 9, 1, 1)
-    | dtFast => (24, 6, 1, 1)
-    | dtFastest => (24, 3, 1, 1)
-    | mtNormal => (24, 9, 1, 2)
-    | mtFast => (24, 6, 1, 2)
-    | mtFastest => (24, 3, 1, 2)
-  { freqStart, framesPerTx, bytesPerTx, extra }
+def params : Protocol → ProtocolParams
+  | audibleNormal => ⟨40, 9, 3, 1, by decide, by decide, by decide⟩
+  | audibleFast => ⟨40, 6, 3, 1, by decide, by decide, by decide⟩
+  | audibleFastest => ⟨40, 3, 3, 1, by decide, by decide, by decide⟩
+  | ultrasoundNormal => ⟨320, 9, 3, 1, by decide, by decide, by decide⟩
+  | ultrasoundFast => ⟨320, 6, 3, 1, by decide, by decide, by decide⟩
+  | ultrasoundFastest => ⟨320, 3, 3, 1, by decide, by decide, by decide⟩
+  | dtNormal => ⟨24, 9, 1, 1, by decide, by decide, by decide⟩
+  | dtFast => ⟨24, 6, 1, 1, by decide, by decide, by decide⟩
+  | dtFastest => ⟨24, 3, 1, 1, by decide, by decide, by decide⟩
+  | mtNormal => ⟨24, 9, 1, 2, by decide, by decide, by decide⟩
+  | mtFast => ⟨24, 6, 1, 2, by decide, by decide, by decide⟩
+  | mtFastest => ⟨24, 3, 1, 2, by decide, by decide, by decide⟩
+
+instance : Inhabited ProtocolParams := ⟨audibleNormal.params⟩
 
 /-- Mono-tone protocols (MT) only work with fixed-length payloads. -/
 def isMonoTone (p : Protocol) : Bool := p.params.extra == 2

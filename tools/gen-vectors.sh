@@ -1,17 +1,21 @@
 #!/bin/sh
-# Regenerates Tests/vectors/: C ggwave 060aec7 waveforms (i16 little-endian,
-# C's GGWAVE_SAMPLE_FORMAT_I16 output) plus manifest.txt, so `lake test`
-# checks against C output without a C toolchain. The first 24 are the vectors
-# of katzenpost/ggwave-rs (its tools/gen-vectors.sh), byte for byte; the last
-# is the voucher contract at 24 kHz with 512-sample frames.
+# Regenerates tests/vectors/ from C ggwave 060aec7 (see tests/vectors/README.md),
+# so `lake test` checks against C output without a C toolchain.
 #
-# Audible and DT/MT vectors are rendered at 16 kHz through C's resampler to
-# keep the repository small; ultrasound needs 48 kHz.
+# waveforms/: whole transmissions (i16 little-endian, C's GGWAVE_SAMPLE_FORMAT_I16
+# output) plus manifest.txt. The first 24 are the vectors of katzenpost/ggwave-rs
+# (its tools/gen-vectors.sh), byte for byte; the last is the voucher contract at
+# 24 kHz with 512-sample frames. Audible and DT/MT waveforms are rendered at 16 kHz
+# through C's resampler to keep the repository small; ultrasound needs 48 kHz.
+#
+# reed_solomon/, framing/, encoder/, decoder/: component vectors as JSON, from
+# tools/ggwave-vectors.cpp.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TOOL=${GGWAVE_C:-$("$ROOT/tools/build-c-ggwave.sh")}
-OUT="$ROOT/Tests/vectors"
+VECTORS="$(dirname "$TOOL")/ggwave-vectors"
+OUT="$ROOT/tests/vectors/waveforms"
 
 rm -f "$OUT"/*.i16
 mkdir -p "$OUT"
@@ -52,4 +56,12 @@ for p in 3 4 5; do vector "$p" 8 8 48000; done
 # the voucher contract's other rate: 24 kHz, 512-sample frames, volume 25
 vector 1 0 32 24000 25 24000 512 -512
 
-du -sh "$OUT"
+for c in reed_solomon framing encoder; do
+    mkdir -p "$ROOT/tests/vectors/$c"
+    "$VECTORS" "$(echo "$c" | tr _ -)" > "$ROOT/tests/vectors/$c/$c.json"
+done
+mkdir -p "$ROOT/tests/vectors/decoder"
+rm -f "$ROOT/tests/vectors/decoder"/*.i16
+"$VECTORS" decoder "$ROOT/tests/vectors/decoder" > "$ROOT/tests/vectors/decoder/decoder.json"
+
+du -sh "$ROOT/tests/vectors"/*

@@ -1,11 +1,13 @@
-import Tests.Unit
-import Tests.Vectors
-import Tests.Interop
+import GgwaveTests.Unit
+import GgwaveTests.Waveforms
+import GgwaveTests.Components
+import GgwaveTests.Interop
 
-/-! `lake test`: unit checks, the C vectors, and live interop with C ggwave and
-the Rust crate when `GGWAVE_C` and `GGWAVE_RS` name their test tools. -/
+/-! `lake test`: unit checks, the C component and waveform vectors, and live
+interop with C ggwave and the Rust crate when `GGWAVE_C` and `GGWAVE_RS` name
+their test tools. -/
 
-open Tests
+open GgwaveTests
 
 def main : IO UInt32 := do
   let failures ← IO.mkRef 0
@@ -16,8 +18,9 @@ def main : IO UInt32 := do
     IO.println s!"{name}: {(← IO.monoMsNow) - t0} ms"
   run "unit" unit
   let vs ← loadVectors
-  run "vectors: Lean encoder against C waveforms" (encoderReproducesC vs)
-  run "vectors: Lean decoder on C waveforms" (decoderReadsC vs)
+  run "components against C vectors" components
+  run "waveforms: Lean encoder against C" (encoderReproducesC vs)
+  run "waveforms: Lean decoder on C waveforms" (decoderReadsC vs)
   match (← IO.getEnv "GGWAVE_C"), (← IO.getEnv "GGWAVE_RS") with
   | some c, some rs => run "interop with C ggwave and the Rust crate" (interop c rs)
   | _, _ => IO.println "GGWAVE_C / GGWAVE_RS not set; skipping live interop"

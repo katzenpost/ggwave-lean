@@ -1,10 +1,11 @@
 #!/bin/sh
-# Builds the C ggwave test tool (tools/ggwave-c.cpp) against upstream ggwave
-# at the pinned commit. Test tooling only; the library never links C.
+# Builds the C ggwave test tools (tools/ggwave-c.cpp, and tools/ggwave-vectors.cpp
+# beside it) against upstream ggwave at the pinned commit. Test tooling only; the
+# library never links C.
 # From katzenpost/ggwave-rs tools/build-c-ggwave.sh.
 #
 # Usage: tools/build-c-ggwave.sh [out-dir]   (default: target/c-ggwave)
-# Prints the path of the built binary. Needs git and a C++ compiler.
+# Prints the path of ggwave-c. Needs git and a C++ compiler.
 set -eu
 
 COMMIT=060aec73dd7123ccac200442f75bdc7369795ffe
@@ -28,4 +29,8 @@ fi
     -I"$SRC/include" -I"$SRC/src" \
     "$ROOT/tools/ggwave-c.cpp" "$SRC/src/ggwave.cpp" \
     -o "$OUT/ggwave-c" 1>&2
+"$CXX" -std=c++11 -O2 -DNDEBUG -ffp-contract=off \
+    -I"$SRC/include" -I"$SRC/src" \
+    "$ROOT/tools/ggwave-vectors.cpp" "$SRC/src/ggwave.cpp" \
+    -o "$OUT/ggwave-vectors" 1>&2
 echo "$OUT/ggwave-c"

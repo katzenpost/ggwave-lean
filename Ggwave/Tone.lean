@@ -16,34 +16,27 @@ def Config.bitFreq (c : Config) (p : ProtocolParams) (bit : Nat) : Float :=
   (c.hzPerSample * p.freqStart.toFloat32 + c.freqDeltaHz * bit.toFloat32).toFloat
 
 /-- One frame of a sine at `freq` Hz starting at `phase`, rounded to `float` as C stores it. -/
-def Config.tone (c : Config) (freq phase : Float) : FloatArray := Id.run do
+def Config.tone (c : Config) (freq phase : Float) : Samples c.spf :=
   let curIhz := 1 / c.hzPerSample.toFloat
   let isf := c.isamplesPerFrame.toFloat
-  let mut t := FloatArray.emptyWithCapacity c.spf
-  for i in [0:c.spf] do
-    t := t.push (roundF32 ((2 * pi) * (i.toFloat * isf) * (freq * curIhz) + phase).sin)
-  return t
+  Samples.ofFn c.spf fun i => roundF32 ((2 * pi) * (i.toFloat * isf) * (freq * curIhz) + phase).sin
 
 /-- Adds `src` scaled by `scalar` to `dst`, with a linear fade over the first
 and last 15% of an `nPerCycle`-frame symbol; `cycleMod` is the frame's place in it. -/
-def addAmplitudeSmooth (src dst : FloatArray) (scalar : Float32) (cycleMod nPerCycle : Nat) :
-    FloatArray := Id.run do
-  let finalId := dst.size
-  let nTotal := (nPerCycle * finalId).toFloat32
+def addAmplitudeSmooth (src dst : Samples n) (scalar : Float32) (cycleMod nPerCycle : Nat) : Samples n :=
+  let nTotal := (nPerCycle * n).toFloat32
   let frac : Float32 := 0.15
   let ids := 1 / (frac * nTotal)
   let nBegin := (frac * nTotal).floor
   let nEnd := ((1 - frac) * nTotal).floor
-  let mut dst := dst
-  for i in [0:finalId] do
-    let k := (cycleMod * finalId + i).toFloat32
-    let s := src[i]!.toFloat32
-    let d := dst[i]!.toFloat32
+  dst.mapIdx fun i d =>
+    let k := (cycleMod * n + i).toFloat32
+    let s := (src.get i).toFloat32
+    let d := d.toFloat32
     let v :=
       if k < nBegin then d + scalar * s * (k * ids)
       else if k > nEnd then d + scalar * s * ((nTotal - k) * ids)
       else d + scalar * s
-    dst := dst.set! i v.toFloat
-  return dst
+    v.toFloat
 
 end Ggwave

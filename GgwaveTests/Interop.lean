@@ -1,4 +1,4 @@
-import Tests.Common
+import GgwaveTests.Common
 
 /-! Live interop with C ggwave 060aec7 and the Rust crate, through test tools
 with one command line (`tools/ggwave-c.cpp`, built by `tools/build-c-ggwave.sh`,
@@ -6,7 +6,7 @@ and `tools/ggwave-rs-oracle`). Run when `GGWAVE_C` and `GGWAVE_RS` name them. -/
 
 open Ggwave
 
-namespace Tests
+namespace GgwaveTests
 
 /-- Runs a test tool with `input` on stdin and returns its stdout. -/
 def runTool (tool : String) (args : Array String) (input : ByteArray) : IO ByteArray := do
@@ -202,4 +202,4 @@ def interop (c rs : String) : T Unit := do
   part "resampled rates" (resampledRates c tools)
   part "DSS" (dssBothWays c tools)
 
-end Tests
+end GgwaveTests

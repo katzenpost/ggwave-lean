@@ -9,15 +9,15 @@ right at a threshold.
 
 namespace Ggwave
 
+def pi : Float := 3.141592653589793
+
 /-- Twiddle factors and bit-reversal permutation for an `n`-point FFT. -/
-structure Fft where
-  n : Nat
+structure Fft (n : Nat) where
   cos : FloatArray
   sin : FloatArray
   rev : Array Nat
-  deriving Inhabited
 
-def pi : Float := 3.141592653589793
+instance : Inhabited (Fft n) := ⟨⟨.empty, .empty, #[]⟩⟩
 
 /-- `i` with its low `bits` bits reversed. -/
 def reverseBits (i bits : Nat) : Nat := Id.run do
@@ -27,7 +27,7 @@ def reverseBits (i bits : Nat) : Nat := Id.run do
   return r
 
 /-- `n` must be a power of two. -/
-def Fft.new (n : Nat) : Fft := Id.run do
+def Fft.new (n : Nat) : Fft n := Id.run do
   let bits := n.log2
   let mut cos := FloatArray.emptyWithCapacity (n / 2)
   let mut sin := FloatArray.emptyWithCapacity (n / 2)
@@ -35,16 +35,15 @@ def Fft.new (n : Nat) : Fft := Id.run do
     let a := -2 * pi * k.toFloat / n.toFloat
     cos := cos.push a.cos
     sin := sin.push a.sin
-  return { n, cos, sin, rev := (Array.range n).map (reverseBits · bits) }
+  return { cos, sin, rev := (Array.range n).map (reverseBits · bits) }
 
 /-- |X_k|^2 at index `k` for `0 < k < n/2`, the DC and Nyquist powers summed at
 index 0 (Ooura packing), and zero above n/2: what ggwave.cpp computes from its
-`rdft` output. `input` must have `f.n` samples. -/
-def Fft.power (f : Fft) (input : FloatArray) : FloatArray := Id.run do
-  let n := f.n
+`rdft` output. -/
+def Fft.power (f : Fft n) (input : Samples n) : Samples n := Id.run do
   let mut re := zeros n
   for i in [0:n] do
-    re := re.set! f.rev[i]! input[i]!
+    re := re.set! f.rev[i]! (input.get i)
   let mut im := zeros n
   for s in [0:n.log2] do
     let len := 2 <<< s
@@ -63,12 +62,9 @@ def Fft.power (f : Fft) (input : FloatArray) : FloatArray := Id.run do
         let (ra, ia) := (re[a]!, im[a]!)
         re := (re.set! b (ra - tr)).set! a (ra + tr)
         im := (im.set! b (ia - ti)).set! a (ia + ti)
-  let mut spectrum := FloatArray.emptyWithCapacity n
-  spectrum := spectrum.push (re[0]! * re[0]! + re[n / 2]! * re[n / 2]!)
-  for k in [1:n / 2] do
-    spectrum := spectrum.push (re[k]! * re[k]! + im[k]! * im[k]!)
-  for _ in [n / 2:n] do
-    spectrum := spectrum.push 0
-  return spectrum
+  return Samples.ofFn n fun k =>
+    if k == 0 then re[0]! * re[0]! + re[n / 2]! * re[n / 2]!
+    else if k < n / 2 then re[k]! * re[k]! + im[k]! * im[k]!
+    else 0
 
 end Ggwave

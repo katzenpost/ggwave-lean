@@ -4,7 +4,7 @@ import Ggwave
 
 open Ggwave
 
-namespace Tests
+namespace GgwaveTests
 
 /-- Tests run with a counter of failed checks. -/
 abbrev T := ReaderT (IO.Ref Nat) IO
@@ -112,4 +112,4 @@ def fmt (x : Float) : String :=
     let d := toString (m % 100)
     s!"{m / 100}.{if d.length < 2 then "0" ++ d else d}e{e.toInt64}"
 
-end Tests
+end GgwaveTests
