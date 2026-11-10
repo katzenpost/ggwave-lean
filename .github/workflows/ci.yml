@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the C ggwave 060aec7 and Rust crate test tools
+        run: |
+          echo "GGWAVE_C=$(tools/build-c-ggwave.sh)" >> "$GITHUB_ENV"
+          cargo build --release --manifest-path tools/ggwave-rs-oracle/Cargo.toml --target-dir target/rs
+          echo "GGWAVE_RS=$PWD/target/rs/release/ggwave-rs-oracle" >> "$GITHUB_ENV"
+      - run: lake build
+      - name: Tests, with live interop
+        run: lake test

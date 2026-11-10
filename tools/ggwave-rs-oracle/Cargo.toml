@@ -1,0 +1,10 @@
+# Test oracle: the Rust ggwave crate behind the same command line as
+# tools/ggwave-c.cpp. Used only by the interop tests; the library never links it.
+[package]
+name = "ggwave-rs-oracle"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ggwave = "=0.1.0"
