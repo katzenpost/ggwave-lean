@@ -1,0 +1,16 @@
+name = "ggwave"
+version = "0.1.0"
+defaultTargets = ["Ggwave"]
+testDriver = "tests"
+
+[[lean_lib]]
+name = "Ggwave"
+
+# test modules, used by the `tests` executable only
+[[lean_lib]]
+name = "GgwaveTests"
+globs = ["GgwaveTests.+"]
+
+[[lean_exe]]
+name = "tests"
+root = "GgwaveTests"
